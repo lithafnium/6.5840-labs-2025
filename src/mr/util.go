@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -70,10 +71,11 @@ func RandString(n int) string {
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the coordinator.
+// Can't use the current directory since
+// Athena AFS doesn't support UNIX-domain sockets.
 func coordinatorSock() string {
-	const N = 20
-	s := "/tmp/5840-mr-"
-	s += RandString(20)
+	s := "/var/tmp/5840-mr-"
+	s += strconv.Itoa(os.Getuid())
 	return s
 }
 
