@@ -18,20 +18,10 @@ type Coordinator struct {
 	reduceTasks map[string]ReduceTask
 }
 
-// Your code here -- RPC handlers for the worker to call.
-
-// an example RPC handler.
-//
-// the RPC argument and reply types are defined in rpc.go.
-func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
-	reply.Y = args.X + 1
-	return nil
-}
-
 func (c *Coordinator) RequestTask(args *RequestTaskArgs, reply *RequestTaskReply) error {
 	c.mu.Lock()
 	now := time.Now()
-	if c.MapDone() {
+	if len(c.mapTasks) == 0 {
 		for id, task := range c.reduceTasks {
 			if task.Status == Pending {
 				task.send()
@@ -68,40 +58,16 @@ func (c *Coordinator) TaskFinished(args *TaskFinishedArgs, reply *TaskFinishedRe
 	c.mu.Lock()
 	if args.MapTaskId != nil {
 		log.Println("Marking task", *args.MapTaskId, "as done")
-		if task, ok := c.mapTasks[*args.MapTaskId]; ok {
-			task.Status = Finished
-			c.mapTasks[*args.MapTaskId] = task
-		}
+		delete(c.mapTasks, *args.MapTaskId)
 	} else if args.ReduceTaskId != nil {
 		log.Println("Marking task", *args.ReduceTaskId, "as done")
-		if task, ok := c.reduceTasks[*args.ReduceTaskId]; ok {
-			task.Status = Finished
-			c.reduceTasks[*args.ReduceTaskId] = task
-		}
+		delete(c.reduceTasks, *args.ReduceTaskId)
 	} else {
 		return errors.New("Invalid task finished call")
 	}
 
 	defer c.mu.Unlock()
 	return nil
-}
-
-func (c *Coordinator) MapDone() bool {
-	for _, mapTask := range c.mapTasks {
-		if mapTask.Status != Finished {
-			return false
-		}
-	}
-	return true
-}
-
-func (c *Coordinator) ReduceDone() bool {
-	for _, reduceTask := range c.reduceTasks {
-		if reduceTask.Status != Finished {
-			return false
-		}
-	}
-	return true
 }
 
 // start a thread that listens for RPCs from worker.go
@@ -121,7 +87,7 @@ func (c *Coordinator) server(sockname string) {
 func (c *Coordinator) Done() bool {
 	// Your code here.
 	c.mu.Lock()
-	done := c.MapDone() && c.ReduceDone()
+	done := len(c.mapTasks) == 0 && len(c.reduceTasks) == 0
 
 	log.Println("coordinator done:", done)
 	defer c.mu.Unlock()
