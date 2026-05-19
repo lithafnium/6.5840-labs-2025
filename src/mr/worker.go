@@ -182,7 +182,7 @@ func CallTaskFinished(taskId string, taskType TaskType) {
 		args.ReduceTaskId = &taskId
 	}
 
-	reply := RequestTaskReply{}
+	reply := TaskFinishedReply{}
 
 	ok := call("Coordinator.TaskFinished", &args, &reply)
 

@@ -20,6 +20,8 @@ type Coordinator struct {
 
 func (c *Coordinator) RequestTask(args *RequestTaskArgs, reply *RequestTaskReply) error {
 	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	now := time.Now()
 	if len(c.mapTasks) == 0 {
 		for id, task := range c.reduceTasks {
@@ -40,12 +42,13 @@ func (c *Coordinator) RequestTask(args *RequestTaskArgs, reply *RequestTaskReply
 			}
 		}
 	}
-	defer c.mu.Unlock()
 	return nil
 }
 
 func (c *Coordinator) TaskFinished(args *TaskFinishedArgs, reply *TaskFinishedReply) error {
 	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if args.MapTaskId != nil {
 		log.Println("Marking task", *args.MapTaskId, "as done")
 		delete(c.mapTasks, *args.MapTaskId)
@@ -56,7 +59,6 @@ func (c *Coordinator) TaskFinished(args *TaskFinishedArgs, reply *TaskFinishedRe
 		return errors.New("Invalid task finished call")
 	}
 
-	defer c.mu.Unlock()
 	return nil
 }
 
@@ -77,10 +79,11 @@ func (c *Coordinator) server(sockname string) {
 func (c *Coordinator) Done() bool {
 	// Your code here.
 	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	done := len(c.mapTasks) == 0 && len(c.reduceTasks) == 0
 
 	log.Println("coordinator done:", done)
-	defer c.mu.Unlock()
 	return done
 }
 
