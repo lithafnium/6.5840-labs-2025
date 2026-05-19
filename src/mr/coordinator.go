@@ -105,11 +105,9 @@ func (c *Coordinator) ReduceDone() bool {
 }
 
 // start a thread that listens for RPCs from worker.go
-func (c *Coordinator) server() {
+func (c *Coordinator) server(sockname string) {
 	rpc.Register(c)
 	rpc.HandleHTTP()
-	sockname := coordinatorSock()
-	log.Printf("Socket %s", sockname)
 	os.Remove(sockname)
 	l, e := net.Listen("unix", sockname)
 	if e != nil {
@@ -122,17 +120,18 @@ func (c *Coordinator) server() {
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
 	// Your code here.
-
+	c.mu.Lock()
 	done := c.MapDone() && c.ReduceDone()
 
-	log.Println("coordinator done: %s", done)
+	log.Println("coordinator done:", done)
+	defer c.mu.Unlock()
 	return done
 }
 
 // create a Coordinator.
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
-func MakeCoordinator(files []string, nReduce int) *Coordinator {
+func MakeCoordinator(sockname string, files []string, nReduce int) *Coordinator {
 	c := Coordinator{}
 
 	// Your code here.
@@ -164,6 +163,6 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 
 	c.mapTasks = mapTasks
 	c.reduceTasks = reduceTasks
-	c.server()
+	c.server(sockname)
 	return &c
 }

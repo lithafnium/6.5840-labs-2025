@@ -36,11 +36,15 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
+var coordSockName string // socket for coordinator
+
 // main/mrworker.go calls this function.
-func Worker(mapf func(string, string) []KeyValue,
+func Worker(sockname string, mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	// Your worker implementation here.
+
+	coordSockName = sockname
 
 	for {
 		task, err := RequestTask()
@@ -236,8 +240,7 @@ func CallExample() {
 // returns false if something goes wrong.
 func call(rpcname string, args interface{}, reply interface{}) bool {
 	// c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
-	sockname := coordinatorSock()
-	c, err := rpc.DialHTTP("unix", sockname)
+	c, err := rpc.DialHTTP("unix", coordSockName)
 	if err != nil {
 		log.Fatal("dialing:", err)
 	}
