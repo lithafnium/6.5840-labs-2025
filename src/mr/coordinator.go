@@ -23,12 +23,7 @@ func (c *Coordinator) RequestTask(args *RequestTaskArgs, reply *RequestTaskReply
 	now := time.Now()
 	if len(c.mapTasks) == 0 {
 		for id, task := range c.reduceTasks {
-			if task.Status == Pending {
-				task.send()
-				c.reduceTasks[id] = task
-				reply.ReduceTask = &task
-				break
-			} else if task.Status == Running && task.RequestedTime != nil && now.Sub(*task.RequestedTime).Seconds() > 10 {
+			if (task.Status == Pending) || (task.Status == Running && task.RequestedTime != nil && now.Sub(*task.RequestedTime).Seconds() > 10) {
 				task.send()
 				c.reduceTasks[id] = task
 				reply.ReduceTask = &task
@@ -37,12 +32,7 @@ func (c *Coordinator) RequestTask(args *RequestTaskArgs, reply *RequestTaskReply
 		}
 	} else {
 		for id, task := range c.mapTasks {
-			if task.Status == Pending {
-				task.send()
-				c.mapTasks[id] = task
-				reply.MapTask = &task
-				break
-			} else if task.Status == Running && task.RequestedTime != nil && now.Sub(*task.RequestedTime).Seconds() > 10 {
+			if (task.Status == Pending) || (task.Status == Running && task.RequestedTime != nil && now.Sub(*task.RequestedTime).Seconds() > 10) {
 				task.send()
 				c.mapTasks[id] = task
 				reply.MapTask = &task
