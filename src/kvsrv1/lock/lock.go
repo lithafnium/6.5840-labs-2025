@@ -35,6 +35,7 @@ func (lk *Lock) Acquire() {
 	// Your code here
 	for {
 		value, version, err := lk.ck.Get(lk.key)
+
 		if err == rpc.ErrNoKey || value == "unlocked" {
 			err := lk.ck.Put(lk.key, lk.value, version)
 
@@ -42,7 +43,12 @@ func (lk *Lock) Acquire() {
 				break
 			}
 		}
-		time.Sleep(2 * time.Second)
+
+		// only happens when put results in maybe
+		if value == lk.value {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 
@@ -60,5 +66,4 @@ func (lk *Lock) Release() {
 	}
 
 	lk.ck.Put(lk.key, "unlocked", version)
-
 }
