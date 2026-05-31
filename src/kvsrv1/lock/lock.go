@@ -32,7 +32,6 @@ func MakeLock(ck kvtest.IKVClerk, lockname string) *Lock {
 }
 
 func (lk *Lock) Acquire() {
-	// Your code here
 	for {
 		value, version, err := lk.ck.Get(lk.key)
 
