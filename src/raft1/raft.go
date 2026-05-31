@@ -36,6 +36,7 @@ type Raft struct {
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 
+	id          int
 	currentTerm int
 	votedFor    int
 	log         []Log
@@ -45,6 +46,8 @@ type Raft struct {
 
 	nextIndex  []int
 	matchIndex []int
+
+	lastHeartbeat time.Time
 }
 
 // return currentTerm and whether this server
@@ -186,10 +189,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 // capitalized all field names in structs passed over RPC, and
 // that the caller passes the address of the reply struct with &, not
 // the struct itself.
-func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
-	return ok
-}
 
 type AppendEntriesArgs struct {
 	Term         int
@@ -214,7 +213,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.Success = false
 		return
 	}
-
 }
 
 // the service using Raft (e.g. a k/v server) wants to start
@@ -251,9 +249,86 @@ func (rf *Raft) ticker() {
 	}
 }
 
+type RequestVoteChannel struct {
+	server int
+	reply  RequestVoteReply
+}
+
+func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
+	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
+	return ok
+}
+
 func (rf *Raft) startElection() {
+	// random duration
+	ms := 300 + (rand.Int63() % 150)
+
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	n := len(rf.peers)
+
+	rf.currentTerm += 1
+	votes := make([]bool, n)
+	lastLog := rf.log[len(rf.log)-1]
+
+	args := RequestVoteArgs{
+		Term:         rf.currentTerm,
+		CandidateId:  rf.id,
+		LastLogIndex: lastLog.index,
+		LastLogTerm:  lastLog.term,
+	}
+	reply := RequestVoteReply{}
+
+	done := make(chan struct{})
+
+	var wg sync.WaitGroup
+	wg.Add(n)
+
+	for i := range n {
+		go func() {
+			defer wg.Done()
+			ok := rf.sendRequestVote(i, &args, &reply)
+			if ok && reply.VoteGranted {
+				votes[i] = true
+			}
+		}()
+	}
+
+	go func() {
+		defer close(done)
+		wg.Wait()
+	}()
+
+	select {
+	case <-done:
+		// dind't time out
+		count := 0
+		for _, i := range votes {
+			if i {
+				count += 1
+			}
+		}
+		if count > n/2 {
+			// make leader
+		} else {
+
+			return
+		}
+	case <-time.After(time.Duration(ms) * time.Millisecond):
+		// timed out
+		return
+
+	}
+}
+
+func (rf *Raft) checkElection() {
 	for true {
 		_, isLeader := rf.GetState()
+
+		if isLeader {
+			continue
+		}
 
 		ms := 50 + (rand.Int63() % 300)
 		time.Sleep(time.Duration(ms) * time.Millisecond)
