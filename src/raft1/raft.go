@@ -9,6 +9,7 @@ package raft
 
 import (
 	//	"bytes"
+
 	"fmt"
 	"math/rand"
 	"sync"
@@ -183,9 +184,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	if args.Term > rf.currentTerm {
-		rf.currentTerm = args.Term
-		rf.votedFor = -1
-		rf.role = Follower
+		rf.demoteLocked(args.Term)
 	}
 
 	reply.Term = rf.currentTerm
@@ -287,9 +286,7 @@ func (rf *Raft) startElection() {
 			}
 
 			if reply.Term > rf.currentTerm {
-				rf.currentTerm = reply.Term
-				rf.role = Follower
-				rf.votedFor = -1
+				rf.demoteLocked(reply.Term)
 				return
 			}
 
@@ -354,6 +351,15 @@ type AppendEntriesReply struct {
 	Success bool
 }
 
+// Assumes lock is held
+func (rf *Raft) demoteLocked(term int) error {
+	rf.currentTerm = term
+	rf.votedFor = -1
+	rf.role = Follower
+
+	return nil
+}
+
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -365,9 +371,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	if args.Term > rf.currentTerm {
-		rf.currentTerm = args.Term
-		rf.votedFor = -1
-		rf.role = Follower
+		rf.demoteLocked(args.Term)
 	}
 
 	rf.lastHeartbeat = time.Now()
@@ -452,17 +456,22 @@ func (rf *Raft) sendHeartbeats() {
 		if i == rf.me {
 			continue
 		}
-
+		rf.mu.Lock()
+		currentTerm := rf.currentTerm
 		next := rf.nextIndex[i]
 		prevIndex := next - 1
+
+		commitIndex := rf.commitIndex
+		prevlogTerm := rf.log[prevIndex].Term
+		rf.mu.Unlock()
 		go func() {
 			args := AppendEntriesArgs{
-				Term:         rf.currentTerm,
+				Term:         currentTerm,
 				LeaderId:     rf.me,
 				PrevLogIndex: prevIndex,
-				PrevLogTerm:  rf.log[prevIndex].Term,
+				PrevLogTerm:  prevlogTerm,
 				Entries:      []Log{},
-				LeaderCommit: rf.commitIndex,
+				LeaderCommit: commitIndex,
 			}
 			var reply AppendEntriesReply
 			for {
@@ -540,9 +549,7 @@ func (rf *Raft) sendCommand(commandIndex int) {
 				}
 
 				if reply.Term > rf.currentTerm {
-					rf.currentTerm = reply.Term
-					rf.role = Follower
-					rf.votedFor = -1
+					rf.demoteLocked(reply.Term)
 					rf.mu.Unlock()
 					return
 				}
