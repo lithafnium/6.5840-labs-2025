@@ -347,6 +347,9 @@ type AppendEntriesArgs struct {
 type AppendEntriesReply struct {
 	Term    int
 	Success bool
+
+	XTerm  int // term of the conflicting entry, or -1
+	XIndex int // first index leader should try
 }
 
 // Assumes lock is held
@@ -387,6 +390,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.serverLog(details)
 		tester.Annotate("Index in log", details, "")
 		reply.Success = false
+
+		reply.XTerm = -1
+		reply.XIndex = len(rf.persistedState.Log)
 		return
 	}
 
@@ -396,6 +402,16 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.serverLog(details)
 		tester.Annotate("Term in log", details, "")
 		reply.Success = false
+
+		conflictTerm := rf.persistedState.Log[prevLogIndex].Term
+		// walk back to the FIRST index storing that term
+		i := prevLogIndex
+		for i > 0 && rf.persistedState.Log[i-1].Term == conflictTerm {
+			i--
+		}
+		reply.XTerm = conflictTerm
+		reply.XIndex = i
+
 		return
 	}
 
@@ -415,14 +431,19 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			continue
 		}
 
-		if rf.persistedState.Log[index].Term != args.Term {
-			rf.persistedState.Log[index] = Log{Term: _log.Term, Index: index, Command: _log.Command}
+		if rf.persistedState.Log[index].Term != _log.Term {
+			// truncate everything after
+			rf.persistedState.Log = rf.persistedState.Log[:index]
+
+			rf.persistedState.Log = append(rf.persistedState.Log, Log{Term: _log.Term, Index: index, Command: _log.Command})
+
+			// rf.persistedState.Log[index] = Log{Term: _log.Term, Index: index, Command: _log.Command}
 			rf.serverLog("Replacing command", _log.Command, "at index", index, "for server", rf.me)
 			// rf.ch <- raftapi.ApplyMsg{CommandValid: false, Command: _log.Command, CommandIndex: index}
 		}
 	}
 	if args.LeaderCommit > rf.commitIndex {
-		rf.commitIndex = min(args.LeaderCommit, len(rf.persistedState.Log)-1)
+		rf.commitIndex = min(args.LeaderCommit, args.PrevLogIndex+len(args.Entries))
 
 		for rf.lastApplied < rf.commitIndex {
 			rf.lastApplied++
@@ -593,8 +614,26 @@ func (rf *Raft) sendCommand(commandIndex int) {
 					return
 				}
 
-				if rf.nextIndex[server] > 1 {
-					rf.nextIndex[server]--
+				if reply.XTerm == -1 {
+					rf.nextIndex[server] = reply.XIndex
+				} else {
+					found := -1
+					for j := len(rf.persistedState.Log) - 1; j >= 0; j-- {
+						if rf.persistedState.Log[j].Term == reply.XTerm {
+							found = j
+							break
+						}
+
+						if rf.persistedState.Log[j].Term < reply.XTerm {
+							break
+						}
+					}
+
+					if found > 0 {
+						rf.nextIndex[server] = found + 1
+					} else {
+						rf.nextIndex[server] = reply.XIndex
+					}
 				}
 
 				rf.mu.Unlock()
@@ -631,8 +670,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		return index, term, false
 	}
 
-	details := fmt.Sprintf("Sending command from leader %v", rf.me)
-	tester.Annotate("Start", details, fmt.Sprintf("Sending command %v", command))
+	// details := fmt.Sprintf("Sending command from leader %v", rf.me)
+	// tester.Annotate("Start", details, fmt.Sprintf("Sending command %v", command))
 
 	rf.mu.Lock()
 	term = rf.persistedState.CurrentTerm
