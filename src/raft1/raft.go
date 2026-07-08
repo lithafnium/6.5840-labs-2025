@@ -162,6 +162,40 @@ func (rf *Raft) PersistBytes() int {
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (3D).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	if index > len(rf.persistedState.Log) {
+		rf.persistedState.Log = []Log{}
+	} else {
+		rf.persistedState.Log = rf.persistedState.Log[index:]
+	}
+}
+
+type InstallSnapshotArgs struct {
+	Term              int
+	LeaderId          int
+	LastIncludedIndex int
+	LastIncludedTerm  int
+	Data              []byte
+}
+
+type InstallSnapshotReply struct {
+	Term int
+}
+
+func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
+	if args.Term < rf.persistedState.CurrentTerm {
+		return
+	}
+
+	if args.LastIncludedIndex < len(rf.persistedState.Log) {
+		lastLog := rf.persistedState.Log[args.LastIncludedIndex]
+		if lastLog.Term == args.LastIncludedTerm {
+			// if the logs are equal then we truncate. otherwise we replace the whole log?
+
+		}
+	}
 
 }
 
@@ -427,7 +461,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		if index >= len(rf.persistedState.Log) {
 			rf.persistedState.Log = append(rf.persistedState.Log, Log{Term: _log.Term, Index: index, Command: _log.Command})
 			rf.serverLog("Appending command", _log.Command, "at index", index, "for server", rf.me)
-			// rf.ch <- raftapi.ApplyMsg{CommandValid: false, Command: _log.Command, CommandIndex: index}
 			continue
 		}
 
@@ -439,23 +472,29 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 			// rf.persistedState.Log[index] = Log{Term: _log.Term, Index: index, Command: _log.Command}
 			rf.serverLog("Replacing command", _log.Command, "at index", index, "for server", rf.me)
-			// rf.ch <- raftapi.ApplyMsg{CommandValid: false, Command: _log.Command, CommandIndex: index}
 		}
 	}
 	if args.LeaderCommit > rf.commitIndex {
 		rf.commitIndex = min(args.LeaderCommit, args.PrevLogIndex+len(args.Entries))
+
+		var msgs []raftapi.ApplyMsg
 
 		for rf.lastApplied < rf.commitIndex {
 			rf.lastApplied++
 			entry := rf.persistedState.Log[rf.lastApplied]
 
 			rf.serverLog("Committing command", entry.Command, "to server", rf.me)
-			rf.ch <- raftapi.ApplyMsg{
+			msgs = append(msgs, raftapi.ApplyMsg{
 				CommandValid: true,
 				Command:      entry.Command,
 				CommandIndex: rf.lastApplied,
-			}
+			})
 		}
+		rf.mu.Unlock()
+		for _, msg := range msgs {
+			rf.ch <- msg
+		}
+		rf.mu.Lock()
 	}
 
 	if len(args.Entries) > 0 {
@@ -590,18 +629,25 @@ func (rf *Raft) sendCommand(commandIndex int) {
 					if count >= majority && rf.commitIndex < commandIndex {
 						rf.commitIndex = commandIndex
 
+						var msgs []raftapi.ApplyMsg
+
 						for rf.lastApplied < rf.commitIndex {
 							rf.lastApplied++
 							entry := rf.persistedState.Log[rf.lastApplied]
 
-							rf.serverLog("Committing command", entry.Command, "to leader", rf.me)
-
-							rf.ch <- raftapi.ApplyMsg{
+							msgs = append(msgs, raftapi.ApplyMsg{
 								CommandValid: true,
 								Command:      entry.Command,
 								CommandIndex: rf.lastApplied,
-							}
+							})
+							rf.serverLog("Committing command", entry.Command, "to leader", rf.me)
 						}
+
+						rf.mu.Unlock()
+						for _, msg := range msgs {
+							rf.ch <- msg
+						}
+						rf.mu.Lock()
 
 						select {
 						case committed <- struct{}{}:
