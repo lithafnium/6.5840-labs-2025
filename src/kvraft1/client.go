@@ -1,16 +1,17 @@
 package kvraft
 
 import (
-	"6.5840/kvsrv1/rpc"
-	"6.5840/kvtest1"
-	"6.5840/tester1"
-)
+	"time"
 
+	"6.5840/kvsrv1/rpc"
+	kvtest "6.5840/kvtest1"
+	tester "6.5840/tester1"
+)
 
 type Clerk struct {
 	clnt    *tester.Clnt
 	servers []string
-	leader int // last successful leader (index into servers[])
+	leader  int // last successful leader (index into servers[])
 	// You can add to this struct.
 }
 
@@ -35,9 +36,34 @@ func (ck *Clerk) Leader() int {
 // must match the declared types of the RPC handler function's
 // arguments. Additionally, reply must be passed as a pointer.
 func (ck *Clerk) Get(key string) (string, rpc.Tversion, rpc.Err) {
+	args := rpc.GetArgs{Key: key}
+
+	serverIndex := ck.leader
+	for {
+		reply := rpc.GetReply{}
+		leaderServer := ck.servers[serverIndex%len(ck.servers)]
+		ok := ck.clnt.Call(leaderServer, "KVServer.Get", &args, &reply)
+
+		if !ok {
+			serverIndex++
+			continue
+		}
+
+		switch reply.Err {
+		case rpc.ErrWrongLeader:
+			// retry another server
+			serverIndex++
+		case rpc.ErrNoKey:
+			return "", 0, rpc.ErrNoKey
+		case rpc.OK:
+			ck.leader = serverIndex % len(ck.servers)
+			return reply.Value, reply.Version, reply.Err
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
 
 	// You will have to modify this function.
-	return "", 0, ""
 }
 
 // Put updates key with value only if the version in the
@@ -58,6 +84,35 @@ func (ck *Clerk) Get(key string) (string, rpc.Tversion, rpc.Err) {
 // must match the declared types of the RPC handler function's
 // arguments. Additionally, reply must be passed as a pointer.
 func (ck *Clerk) Put(key string, value string, version rpc.Tversion) rpc.Err {
-	// You will have to modify this function.
-	return ""
+	args := rpc.PutArgs{Key: key, Value: value, Version: version}
+
+	serverIndex := ck.leader
+	retried := false
+	for {
+		reply := rpc.PutReply{}
+		leaderServer := ck.servers[serverIndex%len(ck.servers)]
+		ok := ck.clnt.Call(leaderServer, "KVServer.Put", &args, &reply)
+
+		if !ok {
+			serverIndex++
+			retried = true
+			time.Sleep(100 * time.Millisecond)
+
+			continue
+		}
+
+		if reply.Err == rpc.ErrWrongLeader {
+			serverIndex++
+			retried = true
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+
+		if reply.Err == rpc.ErrVersion && retried {
+			return rpc.ErrMaybe
+		} else {
+			ck.leader = serverIndex % len(ck.servers)
+			return reply.Err
+		}
+	}
 }
